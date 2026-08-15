@@ -1,0 +1,120 @@
+name: Build and publish container
+
+# The fine-tuned weights live on Hugging Face Hub (mokshhere/adas-kitti-yolo11m)
+# and are fetched by the container at startup, not baked into the image — so
+# this workflow just builds and publishes the runtime image itself. A copy of
+# the weights is also attached to the `weights-v1` release for anyone who wants
+# a direct download without a Hugging Face account.
+#
+# Setup (once): nothing required for GHCR — the built-in token is enough.
+# Optional, for Docker Hub too: add repository secrets DOCKERHUB_USERNAME and
+# DOCKERHUB_TOKEN (Docker Hub > Account Settings > Personal access tokens).
+#
+# Run: Actions tab > "Build and publish container" > Run workflow, or push a
+# tag matching v* (e.g. v1.0.0).
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      # GHCR needs no secrets — the built-in token is enough.
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Check for Docker Hub credentials
+        id: hub
+        run: |
+          if [ -n "${{ secrets.DOCKERHUB_USERNAME }}" ] && [ -n "${{ secrets.DOCKERHUB_TOKEN }}" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Docker Hub secrets absent - publishing to GHCR only."
+          fi
+
+      - name: Log in to Docker Hub
+        if: steps.hub.outputs.enabled == 'true'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Compose image tags
+        id: tags
+        run: |
+          # Registry paths must be lowercase.
+          GHCR="ghcr.io/$(echo "$GITHUB_REPOSITORY_OWNER" | tr 'A-Z' 'a-z')/adas-rebuild"
+          TAGS="${GHCR}:latest,${GHCR}:${GITHUB_SHA::7}"
+          if [ "${{ steps.hub.outputs.enabled }}" = "true" ]; then
+            TAGS="${TAGS},${{ secrets.DOCKERHUB_USERNAME }}/adas-rebuild:latest"
+          fi
+          echo "tags=$TAGS" >> "$GITHUB_OUTPUT"
+          echo "Publishing: $TAGS"
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Run the actual published image and hit its real endpoints, so a broken
+      # entrypoint or a bad model-download path is caught here, not by a user.
+      - name: Smoke test
+        run: |
+          IMAGE=$(echo "${{ steps.tags.outputs.tags }}" | cut -d, -f1)
+          docker run -d --name adas-smoke -p 8000:8000 "$IMAGE"
+
+          echo "waiting for the API to become healthy..."
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:8000/health > /tmp/health.json; then break; fi
+            sleep 5
+          done
+          echo "--- /health ---"; cat /tmp/health.json
+          python3 -c "
+          import json
+          h = json.load(open('/tmp/health.json'))
+          assert h['status'] == 'ok', h
+          print('health OK:', h)
+          "
+
+          curl -sf -X POST http://localhost:8000/analyze \
+            -F "image=@space/samples/000001.png" > /tmp/analyze.json
+          echo "--- /analyze ---"; cat /tmp/analyze.json
+          python3 -c "
+          import json
+          r = json.load(open('/tmp/analyze.json'))
+          assert 'detections' in r and r['fused'] is False, r
+          print(f\"smoke test OK: {len(r['detections'])} detection(s)\")
+          "
+
+          docker logs adas-smoke
+          docker stop adas-smoke
+
+      - name: Summary
+        run: |
+          {
+            echo "### Published"
+            echo '```'
+            echo "${{ steps.tags.outputs.tags }}" | tr ',' '\n'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

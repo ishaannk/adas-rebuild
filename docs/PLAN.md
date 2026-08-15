@@ -122,7 +122,12 @@ edge/embedded deployment without dedicated accelerator hardware.
 - [x] P5 — KITTI-protocol eval, latency/FPS benchmarking, ONNX export — results above
 - [~] P6 — Docker service (FastAPI, CPU/ONNX, fetches the model from HF Hub at
   startup) built and validated end-to-end against the real published model.
-  HF Space demo (`space/`) built and validated locally, but not deployed —
-  Hugging Face requires a PRO subscription to host Docker/Gradio Spaces even
-  on free `cpu-basic` hardware; publishing it is a one-command follow-up
+  Published to GHCR (`ghcr.io/ishaannk/adas-rebuild`) via
+  `.github/workflows/docker.yml`, which also runs the real image and hits
+  `/health` + `/analyze` as a smoke test before considering the build good.
+  Weights also mirrored as a GitHub Release (`weights-v1`) for direct
+  download without a Hugging Face account. HF Space demo (`space/`) built
+  and validated locally, but not deployed — Hugging Face requires a PRO
+  subscription to host Docker/Gradio Spaces even on free `cpu-basic`
+  hardware; publishing it is a one-command follow-up
   (`scripts/publish_space.py`) once that's sorted out.
