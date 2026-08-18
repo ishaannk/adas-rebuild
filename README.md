@@ -201,8 +201,7 @@ on free `cpu-basic` hardware. `python scripts/publish_space.py --repo-id
   permissively-licensed alternative detector.
 - **Time-to-collision is unit-tested on synthetic sequences, not validated
   on real KITTI multi-frame data.** The KITTI Tracking Benchmark (sequences
-  + ego-motion) was deliberately skipped for disk space — see
-  [`docs/PLAN.md`](docs/PLAN.md).
+  + ego-motion) kept for future advancements 
 
 ## Credits
 
